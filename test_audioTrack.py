@@ -5,7 +5,7 @@ from yt_dlp.utils import DownloadError
 
 def get_audio_tracks(url):
     """
-    Fetches and returns all available webm audio tracks for a YouTube video.
+    Fetches and returns all available audio tracks for a YouTube video.
 
     Args:
         url (str): YouTube URL to check for audio tracks
@@ -34,28 +34,24 @@ def get_audio_tracks(url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # Extract format information
             info = ydl.extract_info(url, download=False)
-
             # Loop through all formats
             for format in info.get('formats', []):
-                # Filter for audio-only webm formats
+                # Filter for audio-only formats (both webm and mp4)
                 if (format.get('vcodec') == 'none' and
-                        format.get('acodec') != 'none' and
-                        format.get('ext') == 'webm'):
+                        format.get('acodec') != 'none' or
+                        format.get('resolution') == 'audio only'):
 
                     format_id = format.get('format_id')
 
-                    # Extract language information from format_note if available
-                    format_note = format.get('format_note', '')
+                    # Extract language information from different possible sources
                     language_name = None
 
-                    # Check for language in format_note (typically formatted as "Language, quality")
+                    # Check format_note (e.g., "Français - dubbed")
+                    format_note = format.get('format_note', '')
                     if format_note:
-                        # Split by comma and get the first part (language name)
-                        parts = format_note.split(',', 1)
-                        if parts:
-                            language_name = parts[0].strip()
+                        language_name = format_note.split(' - ')[0] if ' - ' in format_note else format_note
 
-                    # If no format_note, try getting language from language field
+                    # If no language from format_note, try getting from language field
                     if not language_name and format.get('language'):
                         language_name = format.get('language')
 
@@ -67,16 +63,26 @@ def get_audio_tracks(url):
                     if language_name.lower() in processed_languages:
                         continue
 
+                    # Get audio format and protocol info
+                    audio_ext = format.get('ext', '')
+                    protocol = format.get('protocol', '')
+
                     # Get audio bitrate for the description
                     abr = format.get('abr', 'unknown')
-
-                    # Is this the default track?
-                    is_default = 'default' in format_note.lower()
+                    if abr is None:
+                        abr = 'unknown'
 
                     # Create a user-friendly description
-                    description = f"{language_name} (webm, {abr}k)"
-                    if is_default:
-                        description += " [default]"
+                    description = f"{language_name} ({audio_ext}"
+                    if protocol and protocol not in ['http', 'https']:
+                        description += f", {protocol}"
+                    if abr != 'unknown':
+                        description += f", {abr}k"
+                    description += ")"
+
+                    # Check if this is a dubbed track
+                    if 'dubbed' in format_note.lower():
+                        description += " [dubbed]"
 
                     # Add to our results and mark as processed
                     audio_tracks.append({
@@ -108,10 +114,9 @@ def display_audio_track_options(url):
     if len(tracks) <= 1:
         print("No separate audio tracks found or unable to retrieve track information.")
         return None
-
     print("\nAvailable audio tracks:")
     for i, track in enumerate(tracks, 1):
-        print(f"{i}. {track['description']}")
+        print(f"{i}. {track['language']}")
 
     try:
         choice = input("\nSelect audio track (or press Enter for default): ").strip()

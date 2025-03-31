@@ -1,4 +1,4 @@
-import time
+import subprocess
 
 import yt_dlp
 
@@ -69,6 +69,55 @@ def display_subtitle_options(url):
     except ValueError:
         print("Invalid input. No subtitles selected.")
         return None
+
+
+def download_subtitles(url, subtitle_ids):
+    """
+    Downloads subtitles as .srt files for a given YouTube video.
+
+    Args:
+        url (str): YouTube video URL.
+        subtitle_ids (list): List of subtitle format IDs to download.
+    """
+    ydl_opts = {
+        'writesubtitles': True,
+        'subtitleslangs': subtitle_ids,
+        'subtitlesformat': 'srt',
+        'skip_download': True,
+        'quiet': True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        print(f"Error downloading subtitles: {str(e)}")
+
+
+def merge_subtitles(video_file, subtitle_files, output_file):
+    """
+    Merges subtitles into a video file using ffmpeg.
+
+    Args:
+        video_file (str): Path to the video or audio file.
+        subtitle_files (list): List of subtitle file paths.
+        output_file (str): Path to save the merged file.
+    """
+    try:
+        subtitle_args = []
+        for sub in subtitle_files:
+            subtitle_args.extend(["-i", sub])
+
+        command = [
+            "ffmpeg", "-i", video_file,
+            *subtitle_args,
+            "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
+            output_file
+        ]
+
+        subprocess.run(command, check=True)
+        print(f"Successfully merged subtitles into {output_file}")
+    except Exception as e:
+        print(f"Error merging subtitles: {str(e)}")
 
 
 # Example usage
