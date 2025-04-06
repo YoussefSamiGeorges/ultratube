@@ -53,7 +53,7 @@ pip install yt-dlp
 Run the application:
 
 ```bash
-python main.py
+python ultratube_main.py
 ```
 
 Follow the interactive prompts to:
