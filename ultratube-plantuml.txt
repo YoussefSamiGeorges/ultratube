@@ -1,0 +1,148 @@
+@startuml UltraTube Architecture
+
+' Style and layout options
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+skinparam classFontSize 14
+skinparam classFontName Arial
+skinparam classAttributeFontSize 12
+skinparam classAttributeFontName Arial
+
+' Title
+title UltraTube - YouTube Media Downloader Architecture
+
+' Packages and Classes
+package "Main Application" {
+  class UltraTubeMain {
+    + display_header()
+    + display_audio_track_options()
+    + display_subtitle_options()
+    + download_with_progress()
+    + get_yes_no_input()
+    + main()
+  }
+}
+
+package "Core" {
+  class UltraTubeExtractor {
+    - metadata_service: MetadataService
+    - download_service: DownloadService
+    - file_service: FileService
+    + get_audio_tracks()
+    + get_available_subtitles()
+    + download_audio()
+    + download_video()
+    + merge_subtitles()
+  }
+}
+
+package "Services" {
+  class DownloadService {
+    - metadata_service: MetadataService
+    + download_audio()
+    + download_video()
+    + download_subtitles()
+  }
+
+  class MetadataService {
+    - _video_info_cache: Dict
+    - _cache_timestamps: Dict
+    - _cache_ttl: int
+    + get_video_info()
+    + get_audio_tracks()
+    + get_available_subtitles()
+    - _extract_video_info()
+    - _create_video_info()
+  }
+
+  class FileService {
+    + merge_subtitles()
+    + process_download()
+    + cleanup_temp_files()
+    - _run_ffmpeg_command()
+  }
+}
+
+package "Models" {
+  class VideoInfo {
+    + id: str
+    + title: str
+    + formats: List[Dict]
+    + subtitles: Dict
+    + duration: Optional[int]
+    + thumbnail_url: Optional[str]
+    + description: Optional[str]
+    + filename_safe_title()
+  }
+
+  class AudioTrack {
+    + language: str
+    + format_id: str
+    + description: str
+    + codec: Optional[str]
+    + bitrate: Optional[int]
+  }
+
+  class Subtitle {
+    + language: str
+    + language_code: str
+    + format_id: str
+    + is_auto_generated: bool
+  }
+
+  class DownloadOptions {
+    + output_directory: str
+    + include_metadata: bool
+    + include_thumbnail: bool
+    + include_chapters: bool
+    + audio_format_id: Optional[str]
+    + subtitle_ids: List[str]
+  }
+
+  class ProcessOptions {
+    + keep_original: bool
+    + output_format: str
+    + quality_level: Optional[int]
+  }
+}
+
+package "External Libraries" {
+  class "yt_dlp" as ytdlp {
+    + YoutubeDL
+    + extract_info()
+    + download()
+  }
+
+  class "ffmpeg" as ffmpeg {
+    + process media files
+    + merge subtitles
+    + convert formats
+  }
+}
+
+' Relationships
+
+' Main relationships
+UltraTubeMain --> UltraTubeExtractor: uses
+UltraTubeExtractor --* DownloadService: contains
+UltraTubeExtractor --* MetadataService: contains
+UltraTubeExtractor --* FileService: contains
+
+' Service relationships
+DownloadService --> MetadataService: uses
+DownloadService --> ytdlp: uses
+FileService --> ffmpeg: uses via subprocess
+
+' Model relationships
+DownloadService --> DownloadOptions: uses
+FileService --> ProcessOptions: uses
+MetadataService --> VideoInfo: creates
+MetadataService --> AudioTrack: creates
+MetadataService --> Subtitle: creates
+
+' Service-to-model relationships
+UltraTubeExtractor --> AudioTrack: returns
+UltraTubeExtractor --> Subtitle: returns
+UltraTubeExtractor --> DownloadOptions: uses
+
+@enduml

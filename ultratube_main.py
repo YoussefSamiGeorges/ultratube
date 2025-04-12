@@ -1,545 +1,398 @@
+"""
+UltraTube: A YouTube Media Downloader with CLI
+
+This script provides a command-line interface for downloading YouTube videos and audio
+with various options such as quality selection, subtitle downloading, and more.
+"""
 import os
-import subprocess
-from typing import List, Dict, Optional, Union, Any, Tuple
+import sys
+import time
+from typing import List, Dict, Optional, Tuple, Any
 
-import yt_dlp
-from yt_dlp.utils import DownloadError
+from ultratube_extractor import UltraTubeExtractor
+from models import AudioTrack, DownloadOptions, ProcessOptions
 
 
-def get_audio_tracks(url):
+def display_header() -> None:
+    """Display the application header."""
+    print("🎵🎥 UltraTube - YouTube Media Downloader")
+    print()
+
+
+def display_audio_track_options(extractor: UltraTubeExtractor, url: str) -> Optional[str]:
     """
-    Fetches and returns all available audio tracks for a YouTube video.
+    Display available audio tracks and allow user to select one.
 
     Args:
-        url (str): YouTube URL to check for audio tracks
+        extractor: The YouTube extractor instance
+        url: YouTube URL
 
     Returns:
-        list: List of dictionaries containing audio track information
-            Each dictionary contains:
-            - 'language': Language code or name of the audio track
-            - 'format_id': Format ID for use with yt-dlp
-            - 'description': Human-readable description of the audio track
+        Selected audio format ID or None
     """
-    audio_tracks = []
-    processed_languages = set()  # Track languages we've already processed
+    print("ℹ️ Fetching available audio tracks...")
+    tracks = extractor.get_audio_tracks(url)
 
-    # Configure yt-dlp to only extract format information without downloading
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'no_format_sort': True,  # Prevents automatic format sorting
-        'dump_single_json': True,  # Puts data into easily parseable JSON
-    }
-
-    try:
-        # Create a YoutubeDL object to extract info
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Extract format information
-            info = ydl.extract_info(url, download=False)
-            # Loop through all formats
-            for format in info.get('formats', []):
-                # Filter for audio-only formats (both webm and mp4)
-                if (format.get('vcodec') == 'none' and
-                        format.get('acodec') != 'none' or
-                        format.get('resolution') == 'audio only'):
-
-                    format_id = format.get('format_id')
-
-                    # Extract language information from different possible sources
-                    language_name = None
-
-                    # Check format_note (e.g., "Français - dubbed")
-                    format_note = format.get('format_note', '')
-                    if format_note:
-                        language_name = format_note.split(' - ')[0] if ' - ' in format_note else format_note
-
-                    # If no language from format_note, try getting from language field
-                    if not language_name and format.get('language'):
-                        language_name = format.get('language')
-
-                    # Default to language code if available, otherwise "default"
-                    if not language_name:
-                        language_name = format.get('language') or 'default'
-
-                    # Skip if we've already processed this language
-                    if language_name.lower() in processed_languages:
-                        continue
-
-                    # Get audio format and protocol info
-                    audio_ext = format.get('ext', '')
-                    protocol = format.get('protocol', '')
-
-                    # Get audio bitrate for the description
-                    abr = format.get('abr', 'unknown')
-                    if abr is None:
-                        abr = 'unknown'
-
-                    # Create a user-friendly description
-                    description = f"{language_name} ({audio_ext}"
-                    if protocol and protocol not in ['http', 'https']:
-                        description += f", {protocol}"
-                    if abr != 'unknown':
-                        description += f", {abr}k"
-                    description += ")"
-
-                    # Check if this is a dubbed track
-                    if 'dubbed' in format_note.lower():
-                        description += " [dubbed]"
-
-                    # Add to our results and mark as processed
-                    audio_tracks.append({
-                        'language': language_name,
-                        'format_id': format_id,
-                        'description': description
-                    })
-                    processed_languages.add(language_name.lower())
-
-    except Exception as e:
-        print(f"Error retrieving audio tracks: {str(e)}")
-        return []
-
-    return audio_tracks
-
-
-def display_audio_track_options(url):
-    """
-    Displays available audio tracks for a YouTube video and allows user to select one.
-
-    Args:
-        url (str): YouTube URL to check for audio tracks
-
-    Returns:
-        str: Format ID of the selected audio track, or None if no selection made
-    """
-    tracks = get_audio_tracks(url)
-
-    if len(tracks) <= 1:
-        print("No separate audio tracks found or unable to retrieve track information.")
+    if not tracks:
+        print("⚠️ No separate audio tracks found.")
         return None
-    print("\nAvailable audio tracks:")
+
+    # Print audio tracks as a simple table
+    print("Available Audio Tracks:")
+    print("-" * 80)
+    print(f"{'#':<3} {'Language':<15} {'Format ID':<10} {'Quality':<10} {'Codec':<10}")
+    print("-" * 80)
+
     for i, track in enumerate(tracks, 1):
-        print(f"{i}. {track['language']}")
+        # Format bitrate
+        bitrate = f"{track.bitrate}k" if track.bitrate else "N/A"
+
+        print(f"{i:<3} {track.language:<15} {track.format_id:<10} {bitrate:<10} {track.codec or 'Unknown':<10}")
+
+    print("-" * 80)
+
+    choice = input("🔊 Select audio track (or Enter for default): ")
+
+    if not choice:
+        print("ℹ️ Using default audio track.")
+        return None
 
     try:
-        choice = input("\nSelect audio track (or press Enter for default): ").strip()
-        if not choice:
-            return None
-
         choice_idx = int(choice) - 1
         if 0 <= choice_idx < len(tracks):
-            return tracks[choice_idx]['format_id']
+            print(f"✅ Selected: {tracks[choice_idx].description}")
+            return tracks[choice_idx].format_id
         else:
-            print("Invalid selection. Using default audio.")
+            print("⚠️ Invalid selection. Using default audio.")
             return None
     except ValueError:
-        print("Invalid input. Using default audio.")
+        print("⚠️ Invalid input. Using default audio.")
         return None
 
 
-def get_available_subtitles(url: str) -> Dict[str, List[Dict[str, Any]]]:
+def display_subtitle_options(extractor: UltraTubeExtractor, url: str, prompt_text: str) -> Optional[str]:
     """
-    Fetches and returns all available subtitles for a YouTube video.
+    Display available subtitles and allow user to select one.
 
     Args:
-        url (str): YouTube URL to check for subtitles
+        extractor: The YouTube extractor instance
+        url: YouTube URL
+        prompt_text: Text to display when prompting for selection
 
     Returns:
-        Dict[str, List[Dict[str, Any]]]: Dictionary containing available subtitles with language codes as keys
+        Selected subtitle language code or None
     """
-    subtitles: Dict[str, List[Dict[str, Any]]] = {}
+    print("ℹ️ Checking available subtitles...")
+    subtitles = extractor.get_available_subtitles(url)
 
-    ydl_opts: Dict[str, Union[bool, str]] = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'no_format_sort': True,  # Prevents automatic format sorting
-        'dump_single_json': True,  # Puts data into easily parseable JSON
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info: Dict[str, Any] = ydl.extract_info(url, download=False)
-            subtitles = info.get('subtitles', {})  # Extract subtitle info
-    except Exception as e:
-        print(f"Error retrieving subtitles: {str(e)}")
-        return {}
-
-    return subtitles
-
-
-def display_subtitle_options(url: str, prompt_text: str = "\nSelect subtitle language (or press Enter for none): ") -> \
-        Optional[str]:
-    """
-    Displays available subtitles for a YouTube video and allows user selection.
-
-    Args:
-        url (str): YouTube URL to check for subtitles
-        prompt_text (str): Text to display when prompting for selection
-
-    Returns:
-        Optional[str]: Selected subtitle language code or None if no selection made
-    """
-    subs: Dict[str, List[Dict[str, Any]]] = get_available_subtitles(url)
-    if not subs:
-        print("No subtitles available for this video.")
+    if not subtitles:
+        print("⚠️ No subtitles available for this video.")
         return None
 
-    print("\nAvailable subtitles:")
-    languages: List[str] = list(subs.keys())
-    for i, lang in enumerate(languages, 1):
-        print(f"{i}. {subs[lang][0].get('name', lang)}")
+    # Print subtitles as a simple table
+    print("Available Subtitles:")
+    print("-" * 70)
+    print(f"{'#':<3} {'Language':<20} {'Code':<10} {'Auto-Generated'}")
+    print("-" * 70)
+
+    # Convert dictionary to list for display
+    subtitle_languages = []
+    for lang_code, subs in subtitles.items():
+        if subs:  # Check if there are subtitles for this language
+            subtitle_languages.append((lang_code, subs[0]))
+
+    for i, (lang_code, subtitle) in enumerate(subtitle_languages, 1):
+        auto_gen = "Yes ⚙️" if subtitle.is_auto_generated else "No"
+        print(f"{i:<3} {subtitle.language:<20} {lang_code:<10} {auto_gen}")
+
+    print("-" * 70)
+
+    choice = input(f"📝 {prompt_text}: ")
+
+    if not choice:
+        return None
 
     try:
-        choice: str = input(prompt_text).strip()
-        if not choice:
-            return None
-
-        choice_idx: int = int(choice) - 1
-        if 0 <= choice_idx < len(languages):
-            return languages[choice_idx]
+        choice_idx = int(choice) - 1
+        if 0 <= choice_idx < len(subtitle_languages):
+            selected = subtitle_languages[choice_idx]
+            print(f"✅ Selected: {selected[1].language} ({selected[0]})")
+            return subtitle_languages[choice_idx][0]  # Return language code
         else:
-            print("Invalid selection. No subtitles selected.")
+            print("⚠️ Invalid selection. No subtitles selected.")
             return None
     except ValueError:
-        print("Invalid input. No subtitles selected.")
+        print("⚠️ Invalid input. No subtitles selected.")
         return None
 
 
-def download_subtitles(url: str, subtitle_ids: List[str], download_dir: str) -> List[str]:
-    """
-    Downloads subtitles as .srt files for a given YouTube video.
-
-    Args:
-        url (str): YouTube video URL.
-        subtitle_ids (List[str]): List of subtitle language codes to download.
-        download_dir (str): Directory to save the downloaded subtitles.
-
-    Returns:
-        List[str]: List of paths to downloaded subtitle files.
-    """
-    if not subtitle_ids:
-        return []
-
-    ydl_opts: Dict[str, Union[bool, List[str], str]] = {
-        'writesubtitles': True,
-        'subtitleslangs': subtitle_ids,
-        'subtitlesformat': 'vtt',
-        'skip_download': True,
-        'quiet': True,
-        'outtmpl': os.path.join(download_dir, '%(title)s'),
-    }
-
-    subtitle_files: List[str] = []
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_title = info.get('title', 'video')
-            base_path = os.path.join(download_dir, video_title)
-
-            # Construct the expected subtitle file paths
-            for lang in subtitle_ids:
-                sub_path = f"{base_path}.{lang}.vtt"
-                if os.path.exists(sub_path):
-                    subtitle_files.append(sub_path)
-                    print(f"Downloaded subtitle: {sub_path}")
-
-    except Exception as e:
-        print(f"Error downloading subtitles: {str(e)}")
-
-    return subtitle_files
-
-
-def merge_subtitles(video_file: str, subtitle_files: List[str], output_file: str) -> None:
-    """
-    Merges subtitles into a video file using ffmpeg.
-
-    Args:
-        video_file (str): Path to the video or audio file.
-        subtitle_files (List[str]): List of subtitle file paths.
-        output_file (str): Path to save the merged file.
-    """
-    if not subtitle_files:
-        print("No subtitle files to merge.")
-        return
-
-    try:
-        subtitle_args: List[str] = []
-        for sub in subtitle_files:
-            subtitle_args.extend(["-i", sub])
-
-        command: List[str] = [
-            "ffmpeg", "-i", video_file,
-            *subtitle_args,
-            "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
-            output_file
-        ]
-
-        subprocess.run(command, check=True)
-        print(f"Successfully merged subtitles into {output_file}")
-
-        # Delete old subtitle files
-        for sub_file in subtitle_files:
-            os.remove(sub_file)
-            print(f"Deleted {sub_file}")
-        os.remove(video_file)
-        print(f"Deleted {video_file}")
-    except Exception as e:
-        print(f"Error merging subtitles: {str(e)}")
-
-
-def download_audio(
-        url: str,
-        download_dir: str,
-        audio_format_id: Optional[str] = None,
-        subtitle_ids: Optional[List[str]] = None
+def download_with_progress(
+    extractor: UltraTubeExtractor,
+    url: str,
+    download_dir: str,
+    is_audio: bool,
+    quality: Optional[str] = None,
+    audio_format_id: Optional[str] = None,
+    subtitle_ids: Optional[List[str]] = None,
+    include_metadata: bool = True,
+    include_thumbnail: bool = True,
+    include_chapters: bool = True
 ) -> Tuple[Optional[str], List[str]]:
     """
-    Download audio from a YouTube URL.
+    Download media with a progress display.
 
     Args:
-        url (str): YouTube URL to download from
-        download_dir (str): Directory to save the downloaded audio
-        audio_format_id (Optional[str], optional): Specific audio format to download. Defaults to None.
-        subtitle_ids (Optional[List[str]], optional): List of subtitle language codes to download. Defaults to None.
+        extractor: The YouTube extractor instance
+        url: YouTube URL
+        download_dir: Directory to save downloads
+        is_audio: Whether to download audio (True) or video (False)
+        quality: Video quality (only for video downloads)
+        audio_format_id: Specific audio format ID
+        subtitle_ids: List of subtitle language codes
+        include_metadata: Whether to include metadata
+        include_thumbnail: Whether to include thumbnail
+        include_chapters: Whether to include chapters
 
     Returns:
-        Tuple[Optional[str], List[str]]: Tuple containing (path to downloaded audio file, list of subtitle file paths)
+        Tuple of (media file path, list of subtitle file paths)
     """
-    ydl_opts: Dict[str, Union[str, bool, List[Dict[str, str]]]] = {
-        'format': audio_format_id or 'bestaudio/best',
-        'outtmpl': os.path.join(download_dir, '%(title)s.%(ext)s'),
-        'postprocessors': [
-            {
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            },
-            {'key': 'EmbedThumbnail'},
-            {'key': 'FFmpegMetadata'},
-        ],
-        'writethumbnail': True,
-        'verbose': False,
-        'ignoreerrors': False,
-    }
+    media_file = None
+    subtitle_files = []
+    start_time = time.time()
 
-    print("\nDownloading audio...")
-    audio_file_path: Optional[str] = None
+    # Prepare download options
+    options = DownloadOptions(
+        output_directory=download_dir,
+        include_metadata=include_metadata,
+        include_thumbnail=include_thumbnail,
+        include_chapters=include_chapters,
+        audio_format_id=audio_format_id,
+        subtitle_ids=subtitle_ids or []
+    )
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        if info:
-            title = info.get('title', 'audio')
-            audio_file_path = os.path.join(download_dir, f"{title}.mp3")
+    # Simple progress feedback
+    content_type = "Audio" if is_audio else f"Video ({quality})"
+    print(f"⏬ Downloading {content_type}...")
 
-    print("Audio download complete!")
+    try:
+        # Perform the actual download
+        if is_audio:
+            media_file, subtitle_files = extractor.download_audio(
+                url,
+                download_dir,
+                audio_format_id,
+                subtitle_ids,
+                include_metadata,
+                include_thumbnail
+            )
+        else:
+            media_file, subtitle_files = extractor.download_video(
+                url,
+                download_dir,
+                quality or "highest",
+                audio_format_id,
+                subtitle_ids,
+                include_metadata,
+                include_thumbnail,
+                include_chapters
+            )
 
-    # Download subtitles if requested
-    subtitle_files: List[str] = []
-    if subtitle_ids:
-        print("\nDownloading subtitles...")
-        subtitle_files = download_subtitles(url, subtitle_ids, download_dir)
+    except Exception as e:
+        print(f"❌ Failed to download: {str(e)}")
 
-    return audio_file_path, subtitle_files
+    # Calculate download time
+    elapsed_time = time.time() - start_time
+
+    if media_file:
+        print(f"✅ Download completed in {elapsed_time:.1f}s")
+        print(f"💾 Media file: {media_file}")
+
+    if subtitle_files:
+        print(f"📝 Subtitles downloaded: {len(subtitle_files)}")
+
+    return media_file, subtitle_files
 
 
-def download_video(
-        url: str,
-        download_dir: str,
-        quality: str,
-        metadata: Dict[str, bool],
-        audio_format_id: Optional[str] = None,
-        subtitle_ids: Optional[List[str]] = None
-) -> Tuple[Optional[str], List[str]]:
+def get_yes_no_input(prompt: str, default: bool = True) -> bool:
     """
-    Download video from a YouTube URL.
+    Get a yes/no input from the user.
 
     Args:
-        url (str): YouTube URL to download from
-        download_dir (str): Directory to save the downloaded video
-        quality (str): Desired video quality
-        metadata (Dict[str, bool]): Metadata options for download
-        audio_format_id (Optional[str], optional): Specific audio format to download. Defaults to None.
-        subtitle_ids (Optional[List[str]], optional): List of subtitle language codes to download. Defaults to None.
+        prompt: The prompt to display
+        default: Default value (True for yes, False for no)
 
     Returns:
-        Tuple[Optional[str], List[str]]: Tuple containing (path to downloaded video file, list of subtitle file paths)
+        Boolean representing user's choice
     """
-    # Base format selector for video
-    format_map: Dict[str, str] = {
-        'highest': 'bestvideo[ext=mp4]',
-        '1080p': 'bestvideo[height<=1080][ext=mp4]',
-        '720p': 'bestvideo[height<=720][ext=mp4]',
-        '480p': 'bestvideo[height<=480][ext=mp4]',
-        '360p': 'bestvideo[height<=360][ext=mp4]',
-        '240p': 'bestvideo[height<=240][ext=mp4]'
-    }
-    format_selector: str = format_map.get(quality, 'bestvideo[ext=mp4]')
+    default_str = "Y/n" if default else "y/N"
+    response = input(f"{prompt} [{default_str}]: ").strip().lower()
 
-    # Append audio format if specified, otherwise use best audio
-    if audio_format_id:
-        format_selector += f"+{audio_format_id}"
-    else:
-        format_selector += "+bestaudio[ext=m4a]"
-
-    # Add fallback option
-    format_selector += f"/best[height<={quality[:-1] if quality.endswith('p') else '1080'}][ext=mp4]/best"
-
-    ydl_opts: Dict[str, Union[str, bool, List[Dict[str, str]]]] = {
-        'format': format_selector,
-        'outtmpl': os.path.join(download_dir, '%(title)s.%(ext)s'),
-        'writethumbnail': metadata['thumbnail'],
-        'embedthumbnail': metadata['thumbnail'],
-        'writeautomaticsub': False,
-        'embedsubtitles': False,
-        'embedchapters': metadata['chapters'],
-        'merge_output_format': 'mp4',
-        'postprocessors': [
-            {'key': 'FFmpegMetadata'},
-            {'key': 'EmbedThumbnail'},
-        ],
-        'verbose': False,
-        'ignoreerrors': False,
-    }
-
-    print(f"\nDownloading {quality} video...")
-    video_file_path: Optional[str] = None
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        if info:
-            title = info.get('title', 'video')
-            video_file_path = os.path.join(download_dir, f"{title}.mp4")
-
-    print("Video download complete!")
-
-    # Download subtitles if requested
-    subtitle_files: List[str] = []
-    if subtitle_ids:
-        print("\nDownloading subtitles...")
-        subtitle_files = download_subtitles(url, subtitle_ids, download_dir)
-
-    return video_file_path, subtitle_files
+    if not response:
+        return default
+    return response[0] == 'y'
 
 
 def main() -> None:
-    """
-    Main function to run the YouTube Media Downloader with subtitle support.
-    """
-    print("YouTube Media Downloader")
-    print("========================")
+    """Main function to run the YouTube Media Downloader with CLI."""
+    try:
+        # Initialize the YouTube extractor
+        extractor = UltraTubeExtractor()
 
-    while True:
-        try:
+        # Display header
+        display_header()
+
+        while True:
             # Content type selection
-            content_type: str = input("\nChoose content type:\n1. Audio\n2. Video\n> ").strip()
-            if content_type not in ['1', '2']:
-                print("Invalid choice. Please enter 1 or 2.")
-                continue
+            print("===== Main Menu =====")
+            print("1. 🎵 Download Audio")
+            print("2. 🎥 Download Video")
+            print("3. 🚪 Exit")
+            print()
 
-            # Common inputs
-            url: str = input("\nEnter YouTube URL: ").strip()
-            download_dir: str = input("Enter download directory: ").strip()
-            os.makedirs(download_dir, exist_ok=True)
+            content_type = input("Choose an option [1/2/3] (default: 1): ")
+            if not content_type:
+                content_type = "1"
 
-            # Check for audio tracks before downloading
-            selected_audio_format: Optional[str] = display_audio_track_options(url)
+            if content_type == "3":
+                print("👋 Goodbye! Thanks for using UltraTube!")
+                break
 
-            # Check for subtitles
-            print("\nChecking for available subtitles...")
-            primary_subtitle: Optional[str] = display_subtitle_options(url)
+            is_audio = content_type == "1"
 
-            # Check for a second subtitle if the first one was selected
-            secondary_subtitle: Optional[str] = None
+            # Get URL and download directory
+            url = input("🌐 Enter YouTube URL: ")
+
+            default_dir = os.path.expanduser("~/Downloads")
+            download_dir = input(f"📁 Enter download directory (default: {default_dir}): ")
+            if not download_dir:
+                download_dir = default_dir
+
+            # Check if directory exists, create if not
+            if not os.path.exists(download_dir):
+                print(f"⚠️ Directory not found! Creating...")
+                os.makedirs(download_dir, exist_ok=True)
+                print(f"✅ Created directory: {download_dir}")
+
+            # Check for audio tracks and subtitles
+            print("\n🔍 Checking available options...")
+
+            # Get audio tracks
+            audio_format_id = display_audio_track_options(extractor, url)
+
+            # Get primary subtitle
+            primary_subtitle = display_subtitle_options(
+                extractor,
+                url,
+                "Select primary subtitle language (or press Enter for none)"
+            )
+
+            # Get secondary subtitle if primary was selected
+            secondary_subtitle = None
             if primary_subtitle:
-                subs = get_available_subtitles(url)
-                if len(subs) > 1:  # Only ask for second subtitle if multiple are available
-                    print("\nSelect a second subtitle language (optional):")
-                    secondary_subtitle = display_subtitle_options(url,
-                                                                  "\nSelect second subtitle language (or press Enter for none): ")
+                secondary_subtitle = display_subtitle_options(
+                    extractor,
+                    url,
+                    "Select secondary subtitle language (or press Enter for none)"
+                )
 
-            # Create a list of subtitle IDs to download
-            subtitle_ids: List[str] = []
+            # Create list of subtitle IDs
+            subtitle_ids = []
             if primary_subtitle:
                 subtitle_ids.append(primary_subtitle)
             if secondary_subtitle:
                 subtitle_ids.append(secondary_subtitle)
 
-            if content_type == '1':
-                # Download audio with selected options
-                audio_file_path, subtitle_files = download_audio(
+            # Configure metadata options
+            include_metadata = get_yes_no_input("📀 Include metadata?", True)
+            include_thumbnail = get_yes_no_input("🖼️ Include thumbnail?", True)
+
+            if is_audio:
+                # Download audio
+                print("\n⏬ Starting audio download...")
+
+                media_file, subtitle_files = download_with_progress(
+                    extractor,
                     url,
                     download_dir,
-                    selected_audio_format,
-                    subtitle_ids
+                    True,
+                    None,
+                    audio_format_id,
+                    subtitle_ids,
+                    include_metadata,
+                    include_thumbnail,
+                    True
                 )
 
-                # Handle subtitle merging for audio
-                if subtitle_files and audio_file_path:
-                    merge_choice: str = input(
-                        "\nDo you want to merge subtitles with the audio file? (y/n): ").strip().lower()
-                    if merge_choice == 'y':
-                        output_file = os.path.join(download_dir,
-                                                   f"{os.path.splitext(os.path.basename(audio_file_path))[0]}_with_subs.mp4")
-                        merge_subtitles(audio_file_path, subtitle_files, output_file)
             else:
                 # Video quality selection
-                quality: str = input("\nChoose video quality:\n"
-                                     "1. Highest Quality\n"
-                                     "2. 1080p\n"
-                                     "3. 720p\n"
-                                     "4. 480p\n"
-                                     "5. 360p\n"
-                                     "6. 240p\n> ").strip()
+                print("===== Video Quality =====")
+                print("1. highest")
+                print("2. 1080p (Full HD)")
+                print("3. 720p (HD)")
+                print("4. 480p (SD)")
+                print("5. 360p")
+                print("6. 240p")
 
-                quality_map: Dict[str, str] = {
-                    '1': 'highest',
-                    '2': '1080p',
-                    '3': '720p',
-                    '4': '480p',
-                    '5': '360p',
-                    '6': '240p'
+                quality_choices = {
+                    "1": "highest",
+                    "2": "1080p (Full HD)",
+                    "3": "720p (HD)",
+                    "4": "480p (SD)",
+                    "5": "360p",
+                    "6": "240p"
                 }
-                selected_quality: str = quality_map.get(quality, 'highest')
 
-                # Metadata selection
-                metadata_input: str = input(
-                    "\nInclude metadata:\n1. Thumbnail\n2. Chapters\n3. Both\n4. None\n> ").strip()
-                metadata_map: Dict[str, Dict[str, bool]] = {
-                    '1': {'thumbnail': True, 'chapters': False},
-                    '2': {'thumbnail': False, 'chapters': True},
-                    '3': {'thumbnail': True, 'chapters': True},
-                    '4': {'thumbnail': False, 'chapters': False}
-                }
-                metadata: Dict[str, bool] = metadata_map.get(metadata_input, {'thumbnail': False, 'chapters': False})
+                quality_choice = input("🎮 Select video quality [1-6] (default: 1): ")
+                if not quality_choice or quality_choice not in quality_choices:
+                    quality_choice = "1"
 
-                # Download video with selected options
-                video_file_path, subtitle_files = download_video(
+                selected_quality = quality_choices[quality_choice].split(" ")[0]  # Extract just the resolution part
+                quality_name = quality_choices[quality_choice]
+                print(f"✅ Selected: {quality_name}")
+
+                include_chapters = get_yes_no_input("📑 Include chapters?", True)
+
+                # Download video
+                print(f"\n⏬ Starting video download ({quality_name})...")
+
+                media_file, subtitle_files = download_with_progress(
+                    extractor,
                     url,
                     download_dir,
+                    False,
                     selected_quality,
-                    metadata,
-                    selected_audio_format,
-                    subtitle_ids
+                    audio_format_id,
+                    subtitle_ids,
+                    include_metadata,
+                    include_thumbnail,
+                    include_chapters
                 )
 
-                # Handle subtitle merging for video
-                if subtitle_files and video_file_path:
-                    merge_choice: str = input(
-                        "\nDo you want to merge subtitles with the video file? (y/n): ").strip().lower()
-                    if merge_choice == 'y':
-                        output_file = os.path.join(download_dir,
-                                                   f"{os.path.splitext(os.path.basename(video_file_path))[0]}_with_subs.mp4")
-                        merge_subtitles(video_file_path, subtitle_files, output_file)
+            # Handle subtitle merging
+            if subtitle_files and media_file:
+                if get_yes_no_input("🔀 Merge subtitles with media file?", True):
+                    print("🔄 Merging subtitles...")
+                    output_file = extractor.merge_subtitles(media_file, subtitle_files)
 
-            if input("\nAnother download? (y/n): ").lower() != 'y':
+                    if output_file:
+                        print("✅ Successfully merged subtitles!")
+                        print(f"📝 Merged file: {output_file}")
+                    else:
+                        print("❌ Failed to merge subtitles")
+
+            # Offer to download another
+            print("\n🎉 Download completed successfully!")
+
+            if not get_yes_no_input("🔄 Download another?", True):
+                print("🚀 Happy downloading! Thanks for using UltraTube!")
                 break
 
-        except DownloadError as e:
-            print(f"\nDownload error: {str(e)}")
-        except Exception as e:
-            print(f"\nAn error occurred: {str(e)}")
+    except KeyboardInterrupt:
+        print("\n👋 Download canceled by user.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n❌ Critical error: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
