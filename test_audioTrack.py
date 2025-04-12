@@ -26,7 +26,6 @@ def get_audio_tracks(url):
         'no_warnings': True,
         'skip_download': True,
         'no_format_sort': True,  # Prevents automatic format sorting
-        'dump_single_json': True,  # Puts data into easily parseable JSON
     }
 
     try:
@@ -35,6 +34,7 @@ def get_audio_tracks(url):
             # Extract format information
             info = ydl.extract_info(url, download=False)
             # Loop through all formats
+            print(info)
             for format in info.get('formats', []):
                 # Filter for audio-only formats (both webm and mp4)
                 if (format.get('vcodec') == 'none' and
