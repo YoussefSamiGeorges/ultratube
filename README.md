@@ -91,7 +91,6 @@ ultratube/
 ```
 
 ## 📊 UML Class Diagram
-To understand the project architecture, you can use the following UML class diagram. Copy and paste the PlantUML code below into any PlantUML renderer (like [PlantUML Online Server](https://www.plantuml.com/plantuml/uml/) or VS Code with PlantUML extension).
 
 ![image](https://github.com/user-attachments/assets/0c5345ee-04d3-4a8f-832f-3b57d0e7a9ed)
 
