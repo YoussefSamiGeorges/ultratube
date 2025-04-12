@@ -136,6 +136,7 @@ def display_audio_track_options(url):
         print("Invalid input. Using default audio.")
         return None
 
+
 def get_available_subtitles(url: str) -> Dict[str, List[Dict[str, Any]]]:
     """
     Fetches and returns all available subtitles for a YouTube video.
@@ -168,7 +169,7 @@ def get_available_subtitles(url: str) -> Dict[str, List[Dict[str, Any]]]:
 
 
 def display_subtitle_options(url: str, prompt_text: str = "\nSelect subtitle language (or press Enter for none): ") -> \
-Optional[str]:
+        Optional[str]:
     """
     Displays available subtitles for a YouTube video and allows user selection.
 
@@ -277,6 +278,13 @@ def merge_subtitles(video_file: str, subtitle_files: List[str], output_file: str
 
         subprocess.run(command, check=True)
         print(f"Successfully merged subtitles into {output_file}")
+
+        # Delete old subtitle files
+        for sub_file in subtitle_files:
+            os.remove(sub_file)
+            print(f"Deleted {sub_file}")
+        os.remove(video_file)
+        print(f"Deleted {video_file}")
     except Exception as e:
         print(f"Error merging subtitles: {str(e)}")
 
