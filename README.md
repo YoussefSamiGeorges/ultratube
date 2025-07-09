@@ -92,7 +92,8 @@ ultratube/
 
 ## 📊 UML Class Diagram
 
-![image](https://github.com/user-attachments/assets/5c69bc3c-03a8-47a1-9221-8950ab79800c)
+![image](https://github.com/user-attachments/assets/d7329748-bc9b-402f-8cd0-dce9033a277e)
+
 
 
 
