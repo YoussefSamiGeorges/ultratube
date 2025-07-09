@@ -92,7 +92,8 @@ ultratube/
 
 ## 📊 UML Class Diagram
 
-![image](https://github.com/user-attachments/assets/0c5345ee-04d3-4a8f-832f-3b57d0e7a9ed)
+![image](https://github.com/user-attachments/assets/5c69bc3c-03a8-47a1-9221-8950ab79800c)
+
 
 
 ## 🔒 Privacy and Security
